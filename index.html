@@ -299,6 +299,7 @@
   <header class="bar">
     <button class="hudfab" id="hudMenuBtn" title="Add or remove HUD parts">±</button>
     <h1>Loveland</h1>
+    <button class="pill" id="sharePill" title="Sharing your position">LIVE</button>
     <button class="pill" id="muteBtn" title="Mute alerts">SOUND ON</button>
     <span class="pill" id="gpsPill">no signal</span>
   </header>
@@ -801,10 +802,11 @@ const rand = n => Math.random().toString(36).slice(2,2+n).toUpperCase();
 /* No 0/O/1/I so it can be read out loud without mistakes.
    Six characters out of 32 is about a billion combinations — enough that
    two crews on the public broker won't land in the same room. */
+const ROOM_ALL='LOVELAND';     // the room everyone lands in by default
 const CODE_ABC='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newCode = () => Array.from({length:6},()=>CODE_ABC[Math.floor(Math.random()*32)]).join('');
 const prettyCode = c => c ? c.slice(0,3)+' '+c.slice(3) : '—';
-let SHARE={ on:false, room:null, mine:null, name:'', id:null, relay:'' };   // mine = your permanent code
+let SHARE={ on:true, room:null, mine:null, chose:false, name:'', id:null, relay:'' };  // on by default
 let LIVE={}, mq=null, mqState='off', bIdx=0, bTries=0, pushTimer=null;
 let ROSTER={};   // everyone ever seen in the room, kept between sessions
 function upsertRoster(c){
@@ -1376,7 +1378,7 @@ function renderCrew(){
         <div style="min-width:0"><div class="lbl" id="roomLbl">Your room code</div>
         <button class="code" id="roomCode" style="padding:0;text-align:left">—</button>
         <div class="sub" id="roomSub"></div></div></div>
-      <button class="btn" id="backMine" style="display:none">Back to my own room<small></small></button>
+      <button class="btn" id="roomSwap"><small></small></button>
       <div class="addform">
         <input type="text" id="liveRelay" placeholder="Own relay URL (optional)" autocomplete="off" value="${SHARE.relay||''}">
       </div>
@@ -1407,36 +1409,34 @@ function renderCrew(){
     el.querySelector('#liveName').onchange=e=>{ SHARE.name=e.target.value.trim().slice(0,14); save(); pushPos(); };
     el.querySelector('#liveRoom').onchange=e=>{
       const v=e.target.value.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
-      if (!v || v===SHARE.room) return;
-      SHARE.room=v; LIVE={}; drawLive(); save();
-      if (SHARE.on){ liveDisconnect(); bTries=0; SHARE.on=true; liveConnect(); }
-      renderCrew();
-      toast('system','Joined room '+v,'Switch live sharing on and you will see each other.','sys'); };
+      e.target.value='';
+      if (v) joinRoom(v); };
     el.querySelector('#liveOn').onclick=()=>{
       SHARE.on=!SHARE.on;
       if (SHARE.on){
         const ni=el.querySelector('#liveName');
-        SHARE.name = (ni.value||'').trim().slice(0,14);
-        if (!SHARE.name){ SHARE.on=false; ni.focus();
-          return toast('system','Put your name in first','So your friends know which dot is you.','sys'); }
+        SHARE.name=(ni.value||'').trim().slice(0,14)||SHARE.name||'Dancer';
         bTries=0; liveConnect(); }
       else { liveDisconnect(); LIVE={}; drawLive(); }
       save(); renderCrew();
     };
   }
   el.querySelector('#liveOn').setAttribute('aria-checked',SHARE.on);
-  const own = SHARE.room===SHARE.mine;
-  el.querySelector('#roomCode').textContent = prettyCode(SHARE.room);
-  el.querySelector('#roomLbl').textContent = own?'Your room code — always the same':'You joined this room';
-  el.querySelector('#roomSub').textContent = own
-    ? 'It never changes. Let them scan the square, or read the six characters out — they type them below.'
-    : 'Your own code is still '+prettyCode(SHARE.mine)+'.';
-  const bm=el.querySelector('#backMine');
-  bm.style.display = own?'none':'block';
-  bm.querySelector('small').textContent = prettyCode(SHARE.mine);
-  bm.onclick=()=>{ SHARE.room=SHARE.mine; LIVE={}; drawLive(); save();
-    if (SHARE.on){ liveDisconnect(); bTries=0; SHARE.on=true; liveConnect(); }
-    renderCrew(); };
+  const shared = SHARE.room===ROOM_ALL, own = SHARE.room===SHARE.mine;
+  el.querySelector('#roomCode').textContent = shared?ROOM_ALL:prettyCode(SHARE.room);
+  el.querySelector('#roomLbl').textContent =
+    shared?'Everyone is in this room':(own?'Your private room':'You joined this room');
+  el.querySelector('#roomSub').textContent = shared
+    ? 'No codes, no invites: switch sharing on and anyone else with the app who has it on shows up here too.'
+    : 'Only people who type these six characters see you. Your private code is '+prettyCode(SHARE.mine)+'.';
+  const sw=el.querySelector('#roomSwap');
+  sw.textContent = shared?'Use a private room instead':'Back to everyone\'s room';
+  const small=document.createElement('small');
+  small.textContent = shared
+    ? 'Your own code, '+prettyCode(SHARE.mine)+' — only your crew, but they have to enter it'
+    : 'Room '+ROOM_ALL+' — everybody, no codes';
+  sw.appendChild(small);
+  sw.onclick=()=>{ joinRoom(shared?SHARE.mine:ROOM_ALL); };
   el.querySelector('#roomCode').onclick=()=>{
     if (navigator.clipboard) navigator.clipboard.writeText(SHARE.room)
       .then(()=>toast('system','Code copied',SHARE.room,'sys')).catch(()=>{});
@@ -1497,6 +1497,15 @@ function renderCrew(){
     const c=CREW.find(x=>x.id===b.dataset.cgo); setNav(c.name,[c.lat,c.lng]); });
   el.querySelectorAll('[data-cdel]').forEach(b=>b.onclick=()=>{
     CREW=CREW.filter(x=>x.id!==b.dataset.cdel); drawCrew(); save(); render(); });
+}
+function joinRoom(code){
+  if (!code || code===SHARE.room) return;
+  SHARE.room=code; SHARE.chose = code!==ROOM_ALL;
+  LIVE={}; drawLive(); save();
+  if (SHARE.on){ liveDisconnect(); bTries=0; SHARE.on=true; liveConnect(); }
+  renderCrew();
+  toast('system', code===ROOM_ALL?'Back in the shared room':'Joined room '+code,
+    'Live sharing has to be on, on both phones.','sys');
 }
 function invite(){
   const text='Join my Loveland map room '+SHARE.room+': '+shareLink();
@@ -1632,6 +1641,9 @@ function render(){
   renderHUD(); renderDock(); renderSets(); renderQuests(); renderFuel();
   renderNearby(); renderCrew(); renderAlerts();
   document.getElementById('alertBadge').textContent = unread?'('+unread+')':'';
+  const sp=document.getElementById('sharePill');
+  sp.textContent = !SHARE.on ? 'NOT SHARING' : mqState==='on' ? 'LIVE' : mqState==='connecting' ? 'LINKING' : 'OFFLINE';
+  sp.className = 'pill'+(SHARE.on && mqState==='on' ? ' live' : SHARE.on ? '' : ' muted');
   const mb=document.getElementById('muteBtn');
   mb.textContent = isMuted()? 'MUTED '+fmtLeft(muteUntil-Date.now()) : 'SOUND ON';
   mb.className = 'pill'+(isMuted()?' muted':'');
@@ -1758,6 +1770,13 @@ document.getElementById('muteBtn').onclick=()=>{
         isMuted()?'Alerts still pile up in the Alerts tab.':'','sys');
   render();
 };
+document.getElementById('sharePill').onclick=()=>{
+  SHARE.on=!SHARE.on;
+  if (SHARE.on){ bTries=0; liveConnect(); }
+  else { liveDisconnect(); LIVE={}; drawLive();
+    toast('system','Sharing off','Nobody sees your position now. Your friends stay in the list.','sys'); }
+  save(); render(); renderCrew();
+};
 document.getElementById('locBtn').onclick=locateMe;
 document.getElementById('offBtn').onclick=locateMe;
 document.getElementById('wcBtn').onclick=nearestToilet;
@@ -1789,7 +1808,7 @@ const TOUR=[
   ['water','Water and the vitamin',
    'Two bars that drain. Water empties over the interval you set and starts empty — tap it each time you actually drink. The Magic Vitamin runs for however long you set it. Together they drive the energy score and how fast the little dancer moves.'],
   ['crew','Finding your people',
-   'Open Friends, switch on live sharing and show the QR square. Whoever scans it joins your room and you see each other move, refreshed every 8 seconds. Get within 25 m of someone and it counts as finding them: +50 XP.'],
+   'Sharing is already on: everyone using the app is in the same room, so their dots appear on your map by themselves, refreshed every 8 seconds. Put your real name in the Friends tab so they know which one is you, and get within 25 m of someone to bank +50 XP. The LIVE pill at the top turns it off in one tap, any time.'],
   ['you','Two things to switch on',
    'In the Plan tab: turn location on, and the compass if you want the needle to point relative to the way you are facing. No GPS right now? Flip on demo mode and the app walks itself around the grounds so you can see everything fire.']
 ];
@@ -1842,7 +1861,7 @@ function stopDemo(){ clearInterval(demoTimer); demoTimer=null; setPill('no signa
 const SKEY='loveland:v4';
 function snapshot(){
   return JSON.stringify({CAL,SETS,QUESTS,VISITED,CREW,MARKS,ROSTER,HYD,VIT,OPTS,BONUS,
-    SHARE:{room:SHARE.room,mine:SHARE.mine,name:SHARE.name,id:SHARE.id,relay:SHARE.relay,on:SHARE.on},
+    SHARE:{room:SHARE.room,mine:SHARE.mine,chose:SHARE.chose,name:SHARE.name,id:SHARE.id,relay:SHARE.relay,on:SHARE.on},
     extraWC:ZONES.filter(z=>z.kind==='toilet'&&z.id.length>3)});
 }
 async function save(){
@@ -1895,20 +1914,20 @@ setInterval(renderHUD, 30000);
 load().then(()=>{
   seed();
   if (!SHARE.id) SHARE.id=rand(8);
-  if (!SHARE.mine) SHARE.mine = (SHARE.room && SHARE.room.length>=5) ? SHARE.room : newCode();
+  if (!SHARE.mine) SHARE.mine=newCode();
+  if (!SHARE.name) SHARE.name='Dancer '+SHARE.mine.slice(-3);   // so it can connect without asking
   const hash=(location.hash||'').match(/room=([A-Za-z0-9]{3,12})/);
-  if (hash) SHARE.room=hash[1].toUpperCase();
+  if (hash){ SHARE.room=hash[1].toUpperCase(); SHARE.chose=true; }
   const rl=(location.hash||'').match(/relay=([^&]+)/);
   if (rl) SHARE.relay=decodeURIComponent(rl[1]);
-  if (!SHARE.room) SHARE.room=SHARE.mine;
+  if (!SHARE.room || !SHARE.chose) SHARE.room=ROOM_ALL;   // same room for everybody
   syncHash();
   map.setView([CAL.lat,CAL.lng],17);
   applyTheme(); drawPlan(); drawZones(); drawCrew(); drawMarks();
   render(); renderPlan(); applyStack(); applyHud(); startGPS(); watchBattery();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
   if (!tourSeen()) setTimeout(()=>showTour(0),700);
-  if (SHARE.on && SHARE.name){ bTries=0; setTimeout(liveConnect,1200); }
-  else SHARE.on=false;
+  if (SHARE.on){ bTries=0; setTimeout(liveConnect,1200); }
   save();
 });
 </script>
