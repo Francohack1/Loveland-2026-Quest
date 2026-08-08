@@ -213,15 +213,58 @@
   .card .acts button{flex:1;min-width:104px;border:1px solid var(--line);border-radius:11px;padding:12px 8px;
     font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
   .card .acts button.go{color:var(--deep);background:var(--acid);border-color:var(--acid);font-weight:600}
+  /* fill animations */
+  @keyframes fillFlash{0%{filter:brightness(2.4)}100%{filter:none}}
+  @keyframes gaugePop{0%{transform:scale(1)}40%{transform:scale(1.06,1.9)}100%{transform:scale(1)}}
+  .gauge.flash .track{animation:gaugePop .5s cubic-bezier(.2,.9,.3,1.4)}
+  .gauge.flash .track i{animation:fillFlash .6s ease-out}
+  @keyframes floatUp{0%{transform:translateY(0);opacity:1}100%{transform:translateY(-34px);opacity:0}}
+  .floatpop{position:absolute;font-family:Anton,sans-serif;font-size:15px;letter-spacing:.03em;
+    pointer-events:none;animation:floatUp 1s ease-out forwards;z-index:520}
+  /* icons */
+  .ico{width:15px;height:15px;flex:none;display:inline-block;vertical-align:-2px;opacity:.85}
+  .ico svg{width:100%;height:100%;display:block}
+  .row .ico{margin-right:2px}
+  .rowico{width:26px;height:26px;flex:none;display:grid;place-items:center;border:1px solid var(--line);
+    border-radius:8px;color:var(--mute)}
+  .rowico .ico{width:14px;height:14px;opacity:1}
+  /* hud config */
+  .hudfab{width:30px;height:30px;flex:none;border:1px solid var(--line);border-radius:9px;display:grid;
+    place-items:center;color:var(--mute);font-family:'IBM Plex Mono',monospace;font-size:13px}
+  .hudmenu{display:none;position:absolute;top:calc(env(safe-area-inset-top) + 48px);left:12px;z-index:700;
+    width:212px;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:6px 12px 10px;
+    box-shadow:0 18px 40px rgba(0,0,0,.55)}
+  .hudmenu.show{display:block}
+  .hudmenu h3{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--mute);margin:9px 0 2px;font-weight:400}
+  .hudmenu button{display:flex;align-items:center;gap:8px;width:100%;padding:7px 0;font-size:12.5px;text-align:left}
+  .hudmenu button i{width:16px;height:16px;border:1px solid var(--line);border-radius:5px;flex:none;
+    font-style:normal;font-size:11px;line-height:14px;text-align:center;color:var(--deep)}
+  .hudmenu button[aria-pressed="true"] i{background:var(--mint);border-color:var(--mint)}
+  .hudmenu button[aria-pressed="true"] i::after{content:'✓'}
+  /* clearer "you" marker + find-me button */
+  .livepin{display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-50%)}
+  .livepin b{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em;
+    background:rgba(4,38,43,.88);border:1px solid #FF6A3D88;color:#FF6A3D;border-radius:4px;padding:2px 6px;white-space:nowrap}
+  .livepin i{width:9px;height:9px;border-radius:50%;background:#FF6A3D;margin-top:3px;display:block;
+    box-shadow:0 0 0 3px rgba(255,106,61,.25);animation:ping 2.6s ease-out infinite}
+  .livepin.stale b{border-color:var(--line);color:var(--mute)} .livepin.stale i{background:var(--mute);animation:none}
+  .me .youtag{position:absolute;left:50%;top:-17px;transform:translateX(-50%);font-family:'IBM Plex Mono',monospace;
+    font-size:9px;letter-spacing:.1em;color:var(--deep);background:var(--mint);border-radius:4px;padding:1px 5px}
+  .iconbtn.wide{width:auto;padding:0 11px;gap:5px;display:flex;align-items:center;color:var(--mint);
+    border-color:rgba(90,224,200,.55);font-size:9.5px;letter-spacing:.1em}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 
 <div class="app">
   <header class="bar">
-    <h1>Loveland · Sloterpark</h1>
+    <button class="hudfab" id="hudMenuBtn" title="Add or remove HUD parts">±</button>
+    <h1>Loveland</h1>
     <button class="pill" id="muteBtn" title="Mute alerts">SOUND ON</button>
     <span class="pill" id="gpsPill">no signal</span>
   </header>
+
+  <div class="hudmenu" id="hudMenu"></div>
 
   <div class="mapwrap">
     <div id="map"></div>
@@ -258,7 +301,7 @@
         <div class="dist"><span id="dockDist">—</span><small id="dockEta">on foot</small></div>
         <button class="iconbtn" id="hudBtn" title="Show or hide the energy bars">HUD</button>
         <button class="iconbtn" id="wcBtn" title="Nearest toilet">WC</button>
-        <button class="iconbtn" id="locBtn" title="Find me">◎</button>
+        <button class="iconbtn wide" id="locBtn" title="Centre the map on me">⌖ FIND ME</button>
       </div>
     </div>
   </div>
@@ -303,6 +346,7 @@
 </div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.15.2/mqtt.min.js"></script>
 <script>
 /* ===========================================================================
    1. PLAN + CALIBRATION
@@ -388,17 +432,36 @@ const LINEUP = [
 /* the five the user called out — these get a quest seeded automatically */
 const SEED_QUESTS = ['Hot Since 82','Kölsch','WhoMadeWho (hybrid DJ set)','Fatboy Slim','Mind Against'];
 
-const VIT_NAME = 'Magic Vitamin', VIT_MIN = 90;
+const VIT_NAME = 'Magic Vitamin';
 
 let SETS = [];      // {id, act, zoneId, at, end, genre, stageSet}
 let QUESTS = [];    // {id, setId, title, zoneId, at, win, pts, done, doneAt}
 let VISITED = {};
 let CREW = [];      // {id, name, lat, lng, at}
+let BONUS = { xp:0, meets:0 };
 let HYD = { on:true, everyMin:60, last:null, glasses:0 };
-let VIT = { last:null, taken:0 };
+let VIT = { last:null, taken:0, mins:90 };
 const OPTS = { alerts:true, notify:false, follow:true, demo:false, plan:true, opacity:.82,
-               popups:true, offers:true, questRadius:120 };
+               popups:true, offers:true, questRadius:120, meetRadius:25, hud:{} };
 let muteUntil = 0;
+
+/* --- small inline illustrations, drawn here so nothing is fetched or licensed --- */
+const SVG = {
+  stage:'<path d="M4 20V9l8-5 8 5v11"/><circle cx="12" cy="13" r="3.2"/><path d="M4 20h16"/>',
+  food:'<path d="M7 3v8M7 11v10M5 3v5a2 2 0 004 0V3"/><path d="M17 21v-8c2 0 3-1.5 3-5s-1-5-3-5-3 1.5-3 5 1 5 3 5"/>',
+  boat:'<path d="M3 17h18l-2.5 4h-13z"/><path d="M12 3v11M12 6l6 3-6 2"/>',
+  toilet:'<circle cx="8" cy="5" r="2"/><path d="M8 8c-2 0-3 1-3 3v4h1.5v6h3v-6H11v-4c0-2-1-3-3-3z"/><circle cx="17" cy="5" r="2"/><path d="M17 8l-3 7h2v6h2v-6h2l-3-7z"/>',
+  service:'<path d="M12 5v14M5 12h14"/>',
+  exit:'<path d="M14 4h5v16h-5"/><path d="M3 12h11M10 8l4 4-4 4"/>',
+  landmark:'<path d="M3 9c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
+  water:'<path d="M12 3s6 7 6 11a6 6 0 11-12 0c0-4 6-11 6-11z"/>',
+  vitamin:'<rect x="3" y="9" width="18" height="7" rx="3.5" transform="rotate(-35 12 12)"/><path d="M9 15l6-6"/>',
+  quest:'<path d="M5 21V4h11l-1.5 3.5L16 11H5"/>',
+  crew:'<circle cx="9" cy="7" r="3"/><path d="M3 21v-2a5 5 0 015-5h2a5 5 0 015 5v2"/><path d="M17 8a3 3 0 010 6"/>',
+  you:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'
+};
+const ico = k => `<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${SVG[k]||SVG.landmark}</svg></span>`;
+const rowIco = k => `<span class="rowico">${ico(k)}</span>`;
 
 /* ===========================================================================
    2. GEOMETRY
@@ -531,11 +594,12 @@ function onPosition(lat,lng,a,src){
   setPill((src==='demo'?'demo':'live')+' · ±'+Math.round(a)+' m','live');
   if (!meMarker){
     meMarker=L.marker(me,{icon:L.divIcon({className:'',iconSize:[24,24],
-      html:'<div class="me" id="meDot"><i class="fov"></i><em></em><span></span></div>'}),zIndexOffset:1000}).addTo(map);
+      html:'<div class="me" id="meDot"><i class="fov"></i><em></em><span></span><b class="youtag">YOU</b></div>'}),zIndexOffset:1000}).addTo(map);
     accCircle=L.circle(me,{radius:a,color:'#5AE0C8',weight:1,opacity:.35,fillColor:'#5AE0C8',fillOpacity:.06}).addTo(map);
   } else { meMarker.setLatLng(me); accCircle.setLatLng(me).setRadius(a); }
   if (OPTS.follow) map.panTo(me,{animate:true,duration:.5});
   drawRoute(); evaluate(); render();
+  if (mqState==='on' && (!pushPos.last || Date.now()-pushPos.last>5000)){ pushPos.last=Date.now(); pushPos(); }
 }
 function drawRoute(){
   if (routeLine){ routeLine.remove(); routeLine=null; }
@@ -586,6 +650,69 @@ function nearestToilet(){
 }
 
 /* ===========================================================================
+   4b. LIVE LOCATION SHARING
+   No server of ours: the phones talk to each other through a public MQTT
+   broker over websockets. The room code is the only thing keeping the
+   channel private, so treat it like a password.
+   =========================================================================== */
+const BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt','wss://test.mosquitto.org:8081/mqtt'];
+const rand = n => Math.random().toString(36).slice(2,2+n).toUpperCase();
+let SHARE={ on:false, room:null, name:'', id:null };
+let LIVE={}, mq=null, mqState='off', bIdx=0, bTries=0, pushTimer=null;
+const llayer=L.layerGroup().addTo(map);
+const topic = () => 'llf26/'+SHARE.room+'/pos';
+const LIVE_STALE = 3*60000;
+
+function liveDisconnect(){
+  if (pushTimer){ clearInterval(pushTimer); pushTimer=null; }
+  if (mq){ try{ mq.end(true); }catch(e){} mq=null; }
+  mqState='off';
+}
+function nextBroker(){
+  bTries++;
+  if (bTries>=BROKERS.length){ mqState='fail'; SHARE.on=false; renderCrew();
+    toast('system','Live sharing failed','No public broker answered. The paste-a-pin fallback still works.','sys'); return; }
+  bIdx=(bIdx+1)%BROKERS.length; liveConnect();
+}
+function liveConnect(){
+  if (!window.mqtt){ mqState='fail';
+    return toast('system','Sharing library missing','Needs one online load. Reconnect and try again.','sys'); }
+  if (mq){ try{ mq.end(true); }catch(e){} mq=null; }
+  mqState='connecting'; renderCrew();
+  let settled=false;
+  try{
+    mq=mqtt.connect(BROKERS[bIdx],{clientId:'llf_'+SHARE.id+'_'+rand(4),clean:true,
+      reconnectPeriod:0,connectTimeout:8000,keepalive:30});
+  }catch(e){ return nextBroker(); }
+  mq.on('connect',()=>{ settled=true; bTries=0; mqState='on'; mq.subscribe(topic()); pushPos();
+    pushTimer=setInterval(pushPos,8000); renderCrew();
+    toast('system','Live sharing on','Room '+SHARE.room+' · anyone with the code sees you move.','sys'); });
+  mq.on('message',(t,p)=>{
+    try{ const d=JSON.parse(p.toString());
+      if (d && d.id && d.id!==SHARE.id){ LIVE[d.id]=d; drawLive(); renderCrew(); }
+    }catch(e){}
+  });
+  mq.on('error',()=>{ if(!settled) nextBroker(); });
+  mq.on('close',()=>{ if(!settled && mqState==='connecting') nextBroker(); });
+}
+function pushPos(){
+  if (!mq || mqState!=='on' || !me) return;
+  try{ mq.publish(topic(), JSON.stringify({id:SHARE.id,name:SHARE.name||'Anon',
+    lat:+me[0].toFixed(6),lng:+me[1].toFixed(6),acc:Math.round(acc),t:Date.now()})); }catch(e){}
+}
+function drawLive(){
+  llayer.clearLayers();
+  Object.values(LIVE).forEach(c=>{
+    const stale=Date.now()-c.t>LIVE_STALE;
+    L.marker([c.lat,c.lng],{icon:L.divIcon({className:'',iconSize:[0,0],
+      html:`<div class="livepin ${stale?'stale':''}"><b>${c.name}</b><i></i></div>`})}).addTo(llayer);
+  });
+}
+function shareLink(){
+  return location.href.split('#')[0]+'#room='+SHARE.room;
+}
+
+/* ===========================================================================
    5. ALERTS, POP-UPS, MUTE
    =========================================================================== */
 const alerts=[], fired=new Set(); let unread=0;
@@ -614,16 +741,28 @@ function toast(k,h,b,cls){
   while (box.children.length>3) box.firstChild.remove();
 }
 
-let modalSet=null;
+let modalSet=null, modalQuest=null, modalMode=null;
+function askArrival(q,z){
+  modalQuest=q; modalSet=null; modalMode='arrive';
+  const mGo=document.getElementById('mGo'), mQ=document.getElementById('mQuest');
+  document.getElementById('mKind').innerHTML=ico('quest')+' QUEST WITHIN REACH';
+  document.getElementById('mTitle').textContent=q.title;
+  document.getElementById('mBody').textContent='You look like you made it to '+z.name+'. Mark it done for +'+q.pts+' XP?';
+  mQ.style.display='none';
+  mGo.classList.add('go'); mGo.textContent="Yes, I'm here";
+  document.getElementById('mClose').textContent='Not yet';
+  document.getElementById('modal').classList.add('show');
+}
 function popup(s,minsLeft,mode){
   if (!OPTS.popups || isMuted()) return;
-  modalSet=s;
+  modalSet=s; modalQuest=null; modalMode=mode||'set';
+  document.getElementById('mClose').textContent='Dismiss';
   const z=zone(s.zoneId);
   const d = me&&z ? dist(me,zoneLL(s.zoneId)) : null;
   const offer = mode==='offer';
   const mGo=document.getElementById('mGo'), mQ=document.getElementById('mQuest');
-  document.getElementById('mKind').textContent =
-    offer ? 'PLAYING RIGHT NEXT TO YOU' : (minsLeft>0 ? 'STARTS IN '+minsLeft+' MIN' : 'ON NOW');
+  document.getElementById('mKind').innerHTML = ico('stage')+' '+
+    (offer ? 'PLAYING RIGHT NEXT TO YOU' : (minsLeft>0 ? 'STARTS IN '+minsLeft+' MIN' : 'ON NOW'));
   document.getElementById('mTitle').textContent = s.act;
   document.getElementById('mBody').textContent =
     (z?z.name:'stage TBC')+' · '+(s.genre?s.genre+' · ':'')+fmtT(s.at)+'–'+fmtT(s.end)
@@ -635,7 +774,8 @@ function popup(s,minsLeft,mode){
   mGo.textContent = offer?'Walk me in':'Take me there';
   document.getElementById('modal').classList.add('show');
 }
-function closeModal(){ document.getElementById('modal').classList.remove('show'); modalSet=null; }
+function closeModal(){ document.getElementById('modal').classList.remove('show');
+  modalSet=null; modalQuest=null; modalMode=null; }
 
 /* ===========================================================================
    6. FUEL MODEL — water and vitamin as depleting bars
@@ -647,14 +787,25 @@ function waterLevel(){
 }
 function vitLevel(){
   if (!VIT.last) return 0;
-  return Math.max(0, Math.min(1, 1-(Date.now()-VIT.last)/(VIT_MIN*MIN)));
+  return Math.max(0, Math.min(1, 1-(Date.now()-VIT.last)/(VIT.mins*MIN)));
 }
 const energy = () => Math.round(100*(waterLevel()*.6 + vitLevel()*.4));
+function flash(gaugeId,label,color){
+  const g=document.getElementById(gaugeId); if(!g) return;
+  g.classList.remove('flash'); void g.offsetWidth; g.classList.add('flash');
+  setTimeout(()=>g.classList.remove('flash'),700);
+  const r=g.getBoundingClientRect(), f=document.createElement('div');
+  f.className='floatpop'; f.textContent=label; f.style.color=color;
+  f.style.left=(r.left+r.width/2)+'px'; f.style.top=(r.top-4)+'px'; f.style.position='fixed';
+  document.body.appendChild(f); setTimeout(()=>f.remove(),1050);
+}
 function drinkWater(){ HYD.last=Date.now(); HYD.glasses++; save(); render();
+  flash('wGauge','+ H2O','#5AE0C8');
   toast('hydration','Topped up','Bar refilled. Next nudge in '+HYD.everyMin+' min.','water'); }
 function takeVitamin(){
-  VIT.last=Date.now(); VIT.taken++; fired.delete('vit-out-'+VIT.last); save(); render();
-  toast('fuel',VIT_NAME+' active','Runs for 1 h 30 — the bar drains as it wears off.','quest');
+  VIT.last=Date.now(); VIT.taken++; save(); render();
+  flash('vGauge','+ VIT','#E8F24B');
+  toast('fuel',VIT_NAME+' active','Runs for '+fmtLeft(VIT.mins*MIN)+' — the bar drains as it wears off.','quest');
 }
 
 /* ===========================================================================
@@ -719,7 +870,25 @@ function evaluate(){
     const z=zone(q.zoneId); if (!z) return;
     if (dist(me,zoneLL(q.zoneId))>z.r) return;
     if (q.at && Math.abs(t-q.at) > (q.win||30)*MIN) return;
-    completeQuest(q);
+    if (!OPTS.popups || isMuted()) return completeQuest(q);
+    if (!q.askedAt || t-q.askedAt > 5*MIN){ q.askedAt=t; askArrival(q,z); }
+  });
+
+  /* crew: finding each other is worth points */
+  if (me) Object.values(LIVE).forEach(c=>{
+    if (Date.now()-c.t>LIVE_STALE) return;
+    const d=dist(me,[c.lat,c.lng]);
+    if (d>OPTS.meetRadius) return;
+    if (fire('quest','You found '+c.name,'+50 XP · '+Math.round(d)+' m apart','metlive-'+c.id)){
+      BONUS.xp+=50; BONUS.meets++; save();
+    }
+  });
+  if (me) CREW.forEach(c=>{
+    const d=dist(me,[c.lat,c.lng]);
+    if (d>OPTS.meetRadius) return;
+    if (fire('quest','You found '+c.name,'+50 XP · '+Math.round(d)+' m apart','met-'+c.id+'-'+c.at)){
+      BONUS.xp+=50; BONUS.meets++; save();
+    }
   });
 
   /* water */
@@ -729,7 +898,7 @@ function evaluate(){
       HYD.last ? 'water-'+Math.floor(t/(HYD.everyMin*MIN)) : 'water-start');
   }
   /* vitamin worn off */
-  if (VIT.last && vitLevel()<=0) fire('fuel',VIT_NAME+' worn off','1 h 30 is up.','vit-out-'+VIT.last);
+  if (VIT.last && vitLevel()<=0) fire('fuel',VIT_NAME+' worn off',fmtLeft(VIT.mins*MIN)+' is up.','vit-out-'+VIT.last);
 }
 
 /* ===========================================================================
@@ -747,7 +916,7 @@ function renderHUD(){
   document.getElementById('wTxt').textContent = HYD.on
     ? (HYD.last ? fmtLeft(HYD.last+HYD.everyMin*MIN-Date.now()) : 'empty')
     : 'off';
-  document.getElementById('vTxt').textContent = VIT.last ? fmtLeft(VIT.last+VIT_MIN*MIN-Date.now()) : 'tap';
+  document.getElementById('vTxt').textContent = VIT.last ? fmtLeft(VIT.last+VIT.mins*MIN-Date.now()) : 'tap';
   document.getElementById('energyNum').textContent=e;
   const av=document.getElementById('avatar');
   av.style.color = e>66?'var(--mint)' : e>33?'var(--acid)' : 'var(--ember)';
@@ -807,7 +976,7 @@ function renderSets(){
       : left<=15?`<span class="tagsoon">in ${left} min</span>`:`in ${fmtLeft(s.at-t)}`;
     const d = me&&z ? fmtD(dist(me,zoneLL(s.zoneId))) : '';
     const q = QUESTS.some(x=>x.setId===s.id);
-    return `<div class="row ${live?'live':''}"><span class="tmono">${fmtT(s.at)}<br><i style="opacity:.5;font-style:normal">${fmtT(s.end)}</i></span>
+    return `<div class="row ${live?'live':''}">${rowIco(z?z.kind:'stage')}<span class="tmono">${fmtT(s.at)}<br><i style="opacity:.5;font-style:normal">${fmtT(s.end)}</i></span>
       <div class="main"><div class="title">${s.act}</div>
         <div class="sub"><select class="stagesel" data-stage="${s.id}">${opts}</select> ${s.genre||''}</div>
         <div class="sub">${st}${d?' · '+d+' away':''}</div></div>
@@ -852,7 +1021,7 @@ function renderQuests(){
     };
   }
   const stages=ZONES.filter(z=>z.kind==='stage');
-  el.querySelector('#xpNum').textContent=QUESTS.filter(q=>q.done).reduce((a,q)=>a+q.pts,0);
+  el.querySelector('#xpNum').textContent=QUESTS.filter(q=>q.done).reduce((a,q)=>a+q.pts,0)+BONUS.xp;
   el.querySelector('#qDone').textContent=QUESTS.filter(q=>q.done).length;
   el.querySelector('#qTot').textContent=QUESTS.length;
   el.querySelector('#questRows').innerHTML = QUESTS.length
@@ -865,8 +1034,12 @@ function renderQuests(){
       if (q.id==='tour'){ const pct=Math.round(100*stages.filter(s=>VISITED[s.id]).length/stages.length);
         bar=`<div class="prog"><i style="width:${pct}%"></i></div>`; }
       const d = me&&z ? ' · '+fmtD(dist(me,zoneLL(q.zoneId))) : '';
-      return `<div class="row ${q.done?'done':''}"><div class="main">
-          <div class="title">${q.title}</div><div class="sub">${sub}${d}</div>${bar}</div>
+      const st = SETS.find(x=>x.id===q.setId);
+      const g = st&&st.genre ? ' · '+st.genre : '';
+      const hr = st ? ' · '+fmtT(st.at)+'–'+fmtT(st.end) : '';
+      return `<div class="row ${q.done?'done':''}">${rowIco(q.id==='tour'?'quest':(z?z.kind:'quest'))}<div class="main">
+          <div class="title">${q.title}</div><div class="sub">${sub}${g}${d}</div>
+          <div class="sub">${hr?hr.slice(3):''}</div>${bar}</div>
         ${q.done?`<span class="mini acid">${q.pts} xp</span>`
                 :`<button class="mini go" data-q="${q.id}">Done</button>`}</div>`;
     }).join('')
@@ -882,24 +1055,30 @@ function renderFuel(){
   const el=document.getElementById('panel-fuel');
   if (!el.querySelector('#fuelBody')){
     el.innerHTML=`<div id="fuelBody">
-      <div class="row"><div class="main"><div class="title">Water</div>
+      <div class="row">${rowIco('water')}<div class="main"><div class="title">Water</div>
         <div class="sub" id="wSub">—</div><div class="prog"><i id="wBar2"></i></div></div>
         <button class="mini go" id="wDrink">Drink</button></div>
-      <div class="row"><div class="main"><div class="title">${VIT_NAME}</div>
+      <div class="row">${rowIco('vitamin')}<div class="main"><div class="title">${VIT_NAME}</div>
         <div class="sub" id="vSub">—</div><div class="prog"><i id="vBar2"></i></div></div>
         <button class="mini go" id="vTake">Take</button></div>
+      <div class="field"><label for="vMins">Vitamin lasts</label>
+        <input type="range" id="vMins" min="30" max="240" step="15" value="${VIT.mins}">
+        <span class="num">${fmtLeft(VIT.mins*MIN)}</span></div>
       <div class="field"><label for="wEvery">Water every</label>
         <input type="range" id="wEvery" min="20" max="120" step="5" value="${HYD.everyMin}">
         <span class="num">${HYD.everyMin} min</span></div>
       <div class="switch"><div class="main">Water reminder<div class="sub">Runs on a timer, works without GPS</div></div>
         <button class="knob" role="switch" id="wOn"></button></div>
-      <div class="hint">${VIT_NAME} is fixed at 1 h 30. The app logs and reminds — it doesn't suggest doses or combinations. On a hot day treat the hourly water nudge as a floor, not a target.</div></div>`;
+      <div class="hint">${VIT_NAME} runs for whatever you set above. The app logs and reminds — it doesn't suggest doses or combinations. On a hot day treat the hourly water nudge as a floor, not a target.</div></div>`;
     el.querySelector('#wDrink').onclick=drinkWater;
     el.querySelector('#vTake').onclick=takeVitamin;
     el.querySelector('#wOn').onclick=()=>{ HYD.on=!HYD.on; save(); render(); };
     el.querySelector('#wEvery').oninput=e=>{ HYD.everyMin=+e.target.value;
       e.target.nextElementSibling.textContent=HYD.everyMin+' min'; };
     el.querySelector('#wEvery').onchange=()=>{ save(); render(); };
+    el.querySelector('#vMins').oninput=e=>{ VIT.mins=+e.target.value;
+      e.target.nextElementSibling.textContent=fmtLeft(VIT.mins*MIN); renderHUD(); };
+    el.querySelector('#vMins').onchange=()=>{ save(); render(); };
   }
   const w=waterLevel(), v=vitLevel();
   el.querySelector('#wBar2').style.width=(w*100)+'%';
@@ -909,8 +1088,8 @@ function renderFuel(){
     : HYD.last ? Math.round(w*100)+'% · empty in '+fmtLeft(HYD.last+HYD.everyMin*MIN-Date.now())+' · '+HYD.glasses+' today'
                : 'empty — log your first one with Drink';
   el.querySelector('#vSub').textContent = VIT.last
-    ? Math.round(v*100)+'% · '+(v>0?fmtLeft(VIT.last+VIT_MIN*MIN-Date.now())+' left':'worn off')+' · '+VIT.taken+' today'
-    : 'not taken — lasts 1 h 30';
+    ? Math.round(v*100)+'% · '+(v>0?fmtLeft(VIT.last+VIT.mins*MIN-Date.now())+' left':'worn off')+' · '+VIT.taken+' today'
+    : 'not taken — set to last '+fmtLeft(VIT.mins*MIN);
 }
 
 /* ---- Nearby ---- */
@@ -920,7 +1099,7 @@ function renderNearby(){
   const list=ZONES.map(z=>({z,d:dist(me,planToLatLng(z.px,z.py))})).sort((a,b)=>a.d-b.d);
   el.innerHTML = list.map(({z,d})=>{
     const ins=d<=z.r, br=bearingTo(me,planToLatLng(z.px,z.py));
-    return `<div class="row"><div class="main"><div class="title">${z.name} ${ins?'<span class="tagin">· here</span>':''}</div>
+    return `<div class="row">${rowIco(z.kind)}<div class="main"><div class="title">${z.name} ${ins?'<span class="tagin">· here</span>':''}</div>
       <div class="sub"><span class="kind">${z.kind}</span> ${card(br)}</div></div>
       <button class="mini" data-go="${z.id}">Go</button>
       <div class="val">${ins?'◉':fmtD(d)}<small>${ins?'':fmtWalk(d)}</small></div></div>`;
@@ -938,25 +1117,69 @@ function renderNearby(){
 function renderCrew(){
   const el=document.getElementById('panel-crew');
   if (!el.querySelector('#crewRows')){
-    el.innerHTML=`<button class="btn go" id="shareMe">Share my location<small>Sends a map pin through WhatsApp, Telegram, wherever</small></button>
+    el.innerHTML=`<div class="switch"><div class="main">Live sharing<div class="sub" id="liveSub">off</div></div>
+        <button class="knob" role="switch" id="liveOn"></button></div>
+      <div class="addform">
+        <input type="text" id="liveName" placeholder="Your name" autocomplete="off" value="${SHARE.name}">
+        <input type="text" id="liveRoom" placeholder="ROOM" style="width:86px;text-transform:uppercase" value="${SHARE.room||''}">
+      </div>
+      <button class="btn go" id="inviteBtn">Send the invite link<small>Whoever opens it joins the same room automatically</small></button>
+      <div class="hint">Phones relay through a public broker, so the room code is the only thing keeping it private — share it only with your crew, and switch it off when you're done. Positions refresh every 8 s and grey out after 3 min.</div>
+      <button class="btn" id="shareMe">Send a one-off pin<small>A plain map link, for people without the app</small></button>
       <button class="btn" id="addPin">Add someone's pin<small>Paste the link or coordinates they sent you</small></button>
-      <div class="hint">Pins are snapshots, not live tracking — that would need a server. Paste a fresh pin to move someone.</div>
+      <div class="hint">Get within ${OPTS.meetRadius} m of anyone on the map and it counts as finding them: +50 XP.</div>
       <div id="crewRows"></div>`;
     el.querySelector('#shareMe').onclick=shareMe;
     el.querySelector('#addPin').onclick=addPin;
+    el.querySelector('#inviteBtn').onclick=invite;
+    el.querySelector('#liveName').onchange=e=>{ SHARE.name=e.target.value.trim().slice(0,14); save(); pushPos(); };
+    el.querySelector('#liveRoom').onchange=e=>{
+      const v=e.target.value.trim().toUpperCase(); if(!v) return;
+      SHARE.room=v; save(); if(SHARE.on){ LIVE={}; drawLive(); bTries=0; liveConnect(); } };
+    el.querySelector('#liveOn').onclick=()=>{
+      SHARE.on=!SHARE.on;
+      if (SHARE.on){ if(!SHARE.name) SHARE.name=prompt('Name your crew sees','')||'Anon';
+        bTries=0; liveConnect(); }
+      else { liveDisconnect(); LIVE={}; drawLive(); }
+      save(); renderCrew();
+    };
   }
-  el.querySelector('#crewRows').innerHTML = CREW.length ? CREW.map(c=>{
+  el.querySelector('#liveOn').setAttribute('aria-checked',SHARE.on);
+  el.querySelector('#liveSub').textContent =
+    mqState==='on' ? 'live in room '+SHARE.room+' · '+Object.keys(LIVE).length+' other'+(Object.keys(LIVE).length===1?'':'s')
+    : mqState==='connecting' ? 'connecting…'
+    : mqState==='fail' ? 'could not connect — try again'
+    : 'off · room '+SHARE.room;
+  const liveRows = Object.values(LIVE).sort((a,b)=>b.t-a.t).map(c=>{
+    const d=me?dist(me,[c.lat,c.lng]):null, br=me?bearingTo(me,[c.lat,c.lng]):null;
+    const age=Date.now()-c.t, stale=age>LIVE_STALE;
+    return `<div class="row">${rowIco('crew')}<div class="main"><div class="title">${c.name} ${stale?'':'<span class="tagin">· live</span>'}</div>
+      <div class="sub">${stale?'last seen '+fmtLeft(age)+' ago':'updated '+Math.round(age/1000)+'s ago'}${d!=null?' · '+card(br):''}</div></div>
+      <button class="mini" data-lgo="${c.id}">Go</button>
+      <div class="val">${d!=null?fmtD(d):'—'}<small>${d!=null?fmtWalk(d):''}</small></div></div>`;
+  }).join('');
+  const pinRows = CREW.map(c=>{
     const d = me?dist(me,[c.lat,c.lng]):null, br = me?bearingTo(me,[c.lat,c.lng]):null;
-    return `<div class="row"><div class="main"><div class="title">${c.name}</div>
+    return `<div class="row">${rowIco('crew')}<div class="main"><div class="title">${c.name}</div>
       <div class="sub">pinned ${fmtT(c.at)}${d!=null?' · '+card(br):''}</div></div>
       <button class="mini" data-cgo="${c.id}">Go</button>
       <button class="mini" data-cdel="${c.id}">✕</button>
       <div class="val">${d!=null?fmtD(d):'—'}<small>${d!=null?fmtWalk(d):''}</small></div></div>`;
-  }).join('') : '';
+  }).join('');
+  el.querySelector('#crewRows').innerHTML = liveRows + pinRows;
+  el.querySelectorAll('[data-lgo]').forEach(b=>b.onclick=()=>{
+    const c=LIVE[b.dataset.lgo]; if(c) setNav(c.name,[c.lat,c.lng]); });
   el.querySelectorAll('[data-cgo]').forEach(b=>b.onclick=()=>{
     const c=CREW.find(x=>x.id===b.dataset.cgo); setNav(c.name,[c.lat,c.lng]); });
   el.querySelectorAll('[data-cdel]').forEach(b=>b.onclick=()=>{
     CREW=CREW.filter(x=>x.id!==b.dataset.cdel); drawCrew(); save(); render(); });
+}
+function invite(){
+  const text='Join my Loveland map room '+SHARE.room+': '+shareLink();
+  if (navigator.share) navigator.share({title:'Loveland map',text}).catch(()=>{});
+  else if (navigator.clipboard) navigator.clipboard.writeText(text)
+    .then(()=>toast('system','Invite copied','Paste it in the group chat.','sys')).catch(()=>prompt('Copy this',text));
+  else prompt('Copy this',text);
 }
 function shareMe(){
   if (!me) return toast('system','No position yet','Turn location on first.','sys');
@@ -1141,6 +1364,34 @@ document.getElementById('foldBtn').onclick=()=>setSnap(snapIdx===2?0:snapIdx+1);
 })();
 
 /* ---- HUD can be folded away so the map is clear ---- */
+/* ---- which HUD parts are shown ---- */
+const HUD_PARTS=[
+  ['avatar','Dancer','#avatar'],['water','Water bar','#wGauge'],['vit','Vitamin bar','#vGauge'],
+  ['energy','Energy score','.energy'],['compass','Compass','.compass'],['target','Target name','.dock .txt'],
+  ['dist','Distance','.dock .dist'],['wc','Toilet button','#wcBtn'],['findme','Find-me button','#locBtn']
+];
+function applyHud(){
+  HUD_PARTS.forEach(([k,,sel])=>{
+    const el=document.querySelector(sel); if(el) el.style.display = OPTS.hud[k]===false?'none':'';
+  });
+  const anyBar = ['avatar','water','vit','energy'].some(k=>OPTS.hud[k]!==false);
+  document.querySelector('.hud').style.display = anyBar?'':'none';
+}
+function renderHudMenu(){
+  const m=document.getElementById('hudMenu');
+  m.innerHTML='<h3>Show on screen</h3>'+HUD_PARTS.map(([k,label])=>
+    `<button data-hud="${k}" aria-pressed="${OPTS.hud[k]!==false}"><i></i>${label}</button>`).join('');
+  m.querySelectorAll('[data-hud]').forEach(b=>b.onclick=()=>{
+    OPTS.hud[b.dataset.hud] = OPTS.hud[b.dataset.hud]===false;
+    save(); applyHud(); renderHudMenu();
+  });
+}
+document.getElementById('hudMenuBtn').onclick=()=>{
+  const m=document.getElementById('hudMenu');
+  m.classList.toggle('show');
+  if (m.classList.contains('show')) renderHudMenu();
+};
+
 /* full → bars hidden → everything hidden, so the map is completely clear */
 let stackState=0;
 function applyStack(){
@@ -1165,8 +1416,11 @@ document.getElementById('wcBtn').onclick=nearestToilet;
 document.getElementById('wGauge').onclick=drinkWater;
 document.getElementById('vGauge').onclick=takeVitamin;
 document.getElementById('mClose').onclick=closeModal;
-document.getElementById('mGo').onclick=()=>{ if(modalSet){ const ll=zoneLL(modalSet.zoneId);
-  if (ll) setNav(zone(modalSet.zoneId).name, ll); } closeModal(); };
+document.getElementById('mGo').onclick=()=>{
+  if (modalMode==='arrive' && modalQuest){ completeQuest(modalQuest); }
+  else if (modalSet){ const ll=zoneLL(modalSet.zoneId); if(ll) setNav(zone(modalSet.zoneId).name, ll); }
+  closeModal();
+};
 document.getElementById('mQuest').onclick=()=>{ if(modalSet) addQuestFromSet(modalSet.id); closeModal(); };
 document.getElementById('mMute').onclick=()=>{ muteUntil=Date.now()+30*MIN; render(); closeModal(); };
 
@@ -1191,7 +1445,7 @@ function stopDemo(){ clearInterval(demoTimer); demoTimer=null; setPill('no signa
 /* ---- persistence ---- */
 async function save(){
   try{ if(window.storage) await window.storage.set('loveland:v4',
-    JSON.stringify({CAL,SETS,QUESTS,VISITED,CREW,HYD,VIT,OPTS,extraWC:ZONES.filter(z=>z.kind==='toilet'&&z.id.length>3)})); }catch(e){}
+    JSON.stringify({CAL,SETS,QUESTS,VISITED,CREW,HYD,VIT,OPTS,BONUS,SHARE:{room:SHARE.room,name:SHARE.name,id:SHARE.id},extraWC:ZONES.filter(z=>z.kind==='toilet'&&z.id.length>3)})); }catch(e){}
 }
 async function load(){
   try{
@@ -1205,6 +1459,8 @@ async function load(){
       if(d.CREW) CREW=d.CREW;
       if(d.HYD) Object.assign(HYD,d.HYD);
       if(d.VIT) Object.assign(VIT,d.VIT);
+      if(d.BONUS) Object.assign(BONUS,d.BONUS);
+      if(d.SHARE) Object.assign(SHARE,d.SHARE,{on:false});
       if(d.OPTS) Object.assign(OPTS,d.OPTS,{demo:false});
       if(d.extraWC) d.extraWC.forEach(z=>{ if(!ZONES.some(x=>x.id===z.id)) ZONES.push(z); });
     }
@@ -1225,12 +1481,16 @@ function seed(){
     QUESTS.push({id:'tour',title:'Set foot on all six stages',zoneId:null,at:null,pts:100,done:false});
 }
 
-setInterval(()=>{ evaluate(); render(); }, 10000);
+setInterval(()=>{ evaluate(); drawLive(); render(); }, 10000);
 setInterval(renderHUD, 30000);
 
 load().then(()=>{
   seed();
+  if (!SHARE.id) SHARE.id=rand(8);
+  const hash=(location.hash||'').match(/room=([A-Za-z0-9]{3,12})/);
+  if (hash) SHARE.room=hash[1].toUpperCase();
+  if (!SHARE.room) SHARE.room=rand(5);
   map.setView([CAL.lat,CAL.lng],17);
-  drawPlan(); drawZones(); drawCrew(); render(); renderPlan(); applyStack(); startGPS();
+  drawPlan(); drawZones(); drawCrew(); render(); renderPlan(); applyStack(); applyHud(); startGPS();
 });
 </script>
