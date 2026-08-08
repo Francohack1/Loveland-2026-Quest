@@ -806,7 +806,7 @@ const ROOM_ALL='LOVELAND';     // the room everyone lands in by default
 const CODE_ABC='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newCode = () => Array.from({length:6},()=>CODE_ABC[Math.floor(Math.random()*32)]).join('');
 const prettyCode = c => c ? c.slice(0,3)+' '+c.slice(3) : '—';
-let SHARE={ on:true, room:null, mine:null, chose:false, name:'', id:null, relay:'' };  // on by default
+let SHARE={ on:true, room:null, mine:null, chose:false, v5:false, name:'', id:null, relay:'' };
 let LIVE={}, mq=null, mqState='off', bIdx=0, bTries=0, pushTimer=null;
 let ROSTER={};   // everyone ever seen in the room, kept between sessions
 function upsertRoster(c){
@@ -1427,8 +1427,8 @@ function renderCrew(){
   el.querySelector('#roomLbl').textContent =
     shared?'Everyone is in this room':(own?'Your private room':'You joined this room');
   el.querySelector('#roomSub').textContent = shared
-    ? 'No codes, no invites: switch sharing on and anyone else with the app who has it on shows up here too.'
-    : 'Only people who type these six characters see you. Your private code is '+prettyCode(SHARE.mine)+'.';
+    ? 'Same room for every phone running this app. Nothing to type, nothing to scan — your friends just switch sharing on.'
+    : 'Only people who type these six characters see you.';
   const sw=el.querySelector('#roomSwap');
   sw.textContent = shared?'Use a private room instead':'Back to everyone\'s room';
   const small=document.createElement('small');
@@ -1861,7 +1861,7 @@ function stopDemo(){ clearInterval(demoTimer); demoTimer=null; setPill('no signa
 const SKEY='loveland:v4';
 function snapshot(){
   return JSON.stringify({CAL,SETS,QUESTS,VISITED,CREW,MARKS,ROSTER,HYD,VIT,OPTS,BONUS,
-    SHARE:{room:SHARE.room,mine:SHARE.mine,chose:SHARE.chose,name:SHARE.name,id:SHARE.id,relay:SHARE.relay,on:SHARE.on},
+    SHARE:{room:SHARE.room,mine:SHARE.mine,chose:SHARE.chose,v5:SHARE.v5,name:SHARE.name,id:SHARE.id,relay:SHARE.relay,on:SHARE.on},
     extraWC:ZONES.filter(z=>z.kind==='toilet'&&z.id.length>3)});
 }
 async function save(){
@@ -1914,6 +1914,7 @@ setInterval(renderHUD, 30000);
 load().then(()=>{
   seed();
   if (!SHARE.id) SHARE.id=rand(8);
+  if (!SHARE.v5){ SHARE.room=ROOM_ALL; SHARE.chose=false; SHARE.v5=true; }   // one-time reset
   if (!SHARE.mine) SHARE.mine=newCode();
   if (!SHARE.name) SHARE.name='Dancer '+SHARE.mine.slice(-3);   // so it can connect without asking
   const hash=(location.hash||'').match(/room=([A-Za-z0-9]{3,12})/);
@@ -1925,7 +1926,13 @@ load().then(()=>{
   map.setView([CAL.lat,CAL.lng],17);
   applyTheme(); drawPlan(); drawZones(); drawCrew(); drawMarks();
   render(); renderPlan(); applyStack(); applyHud(); startGPS(); watchBattery();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if ('serviceWorker' in navigator){
+    let reloaded=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if (!reloaded){ reloaded=true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js').then(reg=>{ reg.update().catch(()=>{}); }).catch(()=>{});
+  }
   if (!tourSeen()) setTimeout(()=>showTour(0),700);
   if (SHARE.on){ bTries=0; setTimeout(liveConnect,1200); }
   save();
