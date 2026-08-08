@@ -798,8 +798,27 @@ function nearestToilet(){
    =========================================================================== */
 const BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt','wss://test.mosquitto.org:8081/mqtt'];
 const rand = n => Math.random().toString(36).slice(2,2+n).toUpperCase();
-let SHARE={ on:false, room:null, name:'', id:null, relay:'' };   // relay = your own Firebase RTDB url
+/* No 0/O/1/I so it can be read out loud without mistakes.
+   Six characters out of 32 is about a billion combinations — enough that
+   two crews on the public broker won't land in the same room. */
+const CODE_ABC='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newCode = () => Array.from({length:6},()=>CODE_ABC[Math.floor(Math.random()*32)]).join('');
+const prettyCode = c => c ? c.slice(0,3)+' '+c.slice(3) : '—';
+let SHARE={ on:false, room:null, mine:null, name:'', id:null, relay:'' };   // mine = your permanent code
 let LIVE={}, mq=null, mqState='off', bIdx=0, bTries=0, pushTimer=null;
+let ROSTER={};   // everyone ever seen in the room, kept between sessions
+function upsertRoster(c){
+  if (!c || !c.id) return;
+  const fresh=!ROSTER[c.id];
+  const r=ROSTER[c.id]||{id:c.id};
+  r.name=c.name||r.name||'Anon';
+  if (typeof c.xp==='number') r.xp=c.xp;
+  if (c.lat) { r.lat=c.lat; r.lng=c.lng; }
+  r.lastSeen=c.t||Date.now();
+  ROSTER[c.id]=r;
+  if (fresh) save();
+}
+const isOnline = id => LIVE[id] && Date.now()-LIVE[id].t < LIVE_STALE;
 const llayer=L.layerGroup().addTo(map);
 const topic = () => 'llf26/'+SHARE.room+'/pos';
 const LIVE_STALE = 3*60000;
@@ -835,12 +854,12 @@ function onRelay(msg){
   if (!msg || typeof msg.path!=='string') return;
   if (msg.path==='/'){
     LIVE={};
-    if (msg.data) Object.entries(msg.data).forEach(([k,v])=>{ if(k!==SHARE.id && v && v.lat) LIVE[k]=v; });
+    if (msg.data) Object.entries(msg.data).forEach(([k,v])=>{ if(k!==SHARE.id && v && v.lat){ LIVE[k]=v; upsertRoster(v); } });
   } else {
     const id=msg.path.replace(/^\//,'').split('/')[0];
     if (!id || id===SHARE.id) return;
     if (msg.data===null) delete LIVE[id];
-    else LIVE[id]=Object.assign(LIVE[id]||{},msg.data);
+    else { LIVE[id]=Object.assign(LIVE[id]||{},msg.data); upsertRoster(LIVE[id]); }
   }
   drawLive(); renderCrew();
 }
@@ -866,7 +885,7 @@ function liveConnect(){
     toast('system','Live sharing on','Room '+SHARE.room+' · anyone with the code sees you move.','sys'); });
   mq.on('message',(t,p)=>{
     try{ const d=JSON.parse(p.toString());
-      if (d && d.id && d.id!==SHARE.id){ LIVE[d.id]=d; drawLive(); renderCrew(); }
+      if (d && d.id && d.id!==SHARE.id){ LIVE[d.id]=d; upsertRoster(d); drawLive(); renderCrew(); }
     }catch(e){}
   });
   mq.on('error',()=>{ if(!settled) nextBroker(); });
@@ -889,6 +908,11 @@ function drawLive(){
     L.marker([c.lat,c.lng],{icon:L.divIcon({className:'',iconSize:[0,0],
       html:`<div class="livepin ${stale?'stale':''}"><b>${c.name}</b><i></i></div>`})}).addTo(llayer);
   });
+}
+function syncHash(){
+  if (!SHARE.room) return;
+  const want='#room='+SHARE.room+(usingRelay()?'&relay='+encodeURIComponent(SHARE.relay):'');
+  if (location.hash!==want){ try{ history.replaceState(null,'',want); }catch(e){} }
 }
 function shareLink(){
   return location.href.split('#')[0]+'#room='+SHARE.room
@@ -1346,11 +1370,13 @@ function renderCrew(){
         <button class="knob" role="switch" id="liveOn"></button></div>
       <div class="addform">
         <input type="text" id="liveName" placeholder="Your name" autocomplete="off" value="${SHARE.name}">
-        <input type="text" id="liveRoom" placeholder="Their code" style="width:104px;text-transform:uppercase" value="${SHARE.room||''}">
+        <input type="text" id="liveRoom" placeholder="Join their code" style="width:118px;text-transform:uppercase" autocomplete="off">
       </div>
       <div class="roomcard"><div class="qr" id="qrBox"></div>
-        <div><div class="lbl">Room code</div><div class="code" id="roomCode">—</div>
-        <div class="sub">Point their camera at this square, or read them the code — they type it below. Everything happens inside this app.</div></div></div>
+        <div style="min-width:0"><div class="lbl" id="roomLbl">Your room code</div>
+        <button class="code" id="roomCode" style="padding:0;text-align:left">—</button>
+        <div class="sub" id="roomSub"></div></div></div>
+      <button class="btn" id="backMine" style="display:none">Back to my own room<small></small></button>
       <div class="addform">
         <input type="text" id="liveRelay" placeholder="Own relay URL (optional)" autocomplete="off" value="${SHARE.relay||''}">
       </div>
@@ -1380,8 +1406,12 @@ function renderCrew(){
       if (SHARE.on){ liveDisconnect(); LIVE={}; drawLive(); bTries=0; liveConnect(); } };
     el.querySelector('#liveName').onchange=e=>{ SHARE.name=e.target.value.trim().slice(0,14); save(); pushPos(); };
     el.querySelector('#liveRoom').onchange=e=>{
-      const v=e.target.value.trim().toUpperCase(); if(!v) return;
-      SHARE.room=v; save(); if(SHARE.on){ LIVE={}; drawLive(); bTries=0; liveConnect(); } };
+      const v=e.target.value.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+      if (!v || v===SHARE.room) return;
+      SHARE.room=v; LIVE={}; drawLive(); save();
+      if (SHARE.on){ liveDisconnect(); bTries=0; SHARE.on=true; liveConnect(); }
+      renderCrew();
+      toast('system','Joined room '+v,'Switch live sharing on and you will see each other.','sys'); };
     el.querySelector('#liveOn').onclick=()=>{
       SHARE.on=!SHARE.on;
       if (SHARE.on){
@@ -1395,7 +1425,22 @@ function renderCrew(){
     };
   }
   el.querySelector('#liveOn').setAttribute('aria-checked',SHARE.on);
-  el.querySelector('#roomCode').textContent = SHARE.room||'—';
+  const own = SHARE.room===SHARE.mine;
+  el.querySelector('#roomCode').textContent = prettyCode(SHARE.room);
+  el.querySelector('#roomLbl').textContent = own?'Your room code — always the same':'You joined this room';
+  el.querySelector('#roomSub').textContent = own
+    ? 'It never changes. Let them scan the square, or read the six characters out — they type them below.'
+    : 'Your own code is still '+prettyCode(SHARE.mine)+'.';
+  const bm=el.querySelector('#backMine');
+  bm.style.display = own?'none':'block';
+  bm.querySelector('small').textContent = prettyCode(SHARE.mine);
+  bm.onclick=()=>{ SHARE.room=SHARE.mine; LIVE={}; drawLive(); save();
+    if (SHARE.on){ liveDisconnect(); bTries=0; SHARE.on=true; liveConnect(); }
+    renderCrew(); };
+  el.querySelector('#roomCode').onclick=()=>{
+    if (navigator.clipboard) navigator.clipboard.writeText(SHARE.room)
+      .then(()=>toast('system','Code copied',SHARE.room,'sys')).catch(()=>{});
+  };
   const qb=el.querySelector('#qrBox');
   if (qb && qb.dataset.for!==shareLink()){
     try{
@@ -1409,12 +1454,20 @@ function renderCrew(){
     : mqState==='connecting' ? 'connecting…'
     : mqState==='fail' ? 'could not connect — try again'
     : 'off · room '+SHARE.room;
-  const liveRows = Object.values(LIVE).sort((a,b)=>b.t-a.t).map(c=>{
-    const d=me?dist(me,[c.lat,c.lng]):null, br=me?bearingTo(me,[c.lat,c.lng]):null;
-    const age=Date.now()-c.t, stale=age>LIVE_STALE;
-    return `<div class="row">${rowIco('crew')}<div class="main"><div class="title">${c.name} ${stale?'':'<span class="tagin">· live</span>'}</div>
-      <div class="sub">${stale?'last seen '+fmtLeft(age)+' ago':'updated '+Math.round(age/1000)+'s ago'}${d!=null?' · '+card(br):''}</div></div>
-      <button class="mini" data-lgo="${c.id}">Go</button>
+  const roster=Object.values(ROSTER).sort((a,b)=>
+    (isOnline(b.id)?1:0)-(isOnline(a.id)?1:0) || (b.lastSeen||0)-(a.lastSeen||0));
+  const liveRows = (roster.length
+    ? `<h3 style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);margin:14px 0 0;font-weight:400">Your crew · ${roster.filter(r=>isOnline(r.id)).length} of ${roster.length} live</h3>`
+    : '') + roster.map(c=>{
+    const on=isOnline(c.id), pos=LIVE[c.id]||c;
+    const d = me&&pos.lat?dist(me,[pos.lat,pos.lng]):null;
+    const br = me&&pos.lat?bearingTo(me,[pos.lat,pos.lng]):null;
+    const age=Date.now()-(pos.t||c.lastSeen||0);
+    return `<div class="row">${rowIco('crew')}<div class="main">
+      <div class="title">${c.name} ${on?'<span class="tagin">· live</span>':''}</div>
+      <div class="sub">${on?'updated '+Math.round(age/1000)+'s ago':'offline · last seen '+fmtT(c.lastSeen)}${d!=null?' · '+card(br):''}</div></div>
+      ${pos.lat?`<button class="mini" data-lgo="${c.id}">Go</button>`:''}
+      <button class="mini" data-ldel="${c.id}">✕</button>
       <div class="val">${d!=null?fmtD(d):'—'}<small>${d!=null?fmtWalk(d):''}</small></div></div>`;
   }).join('');
   const pinRows = CREW.map(c=>{
@@ -1426,7 +1479,7 @@ function renderCrew(){
       <div class="val">${d!=null?fmtD(d):'—'}<small>${d!=null?fmtWalk(d):''}</small></div></div>`;
   }).join('');
   const board=[{name:(SHARE.name||'You')+' · you',xp:xpTotal()}]
-    .concat(Object.values(LIVE).map(c=>({name:c.name,xp:c.xp||0})))
+    .concat(Object.values(ROSTER).map(c=>({name:c.name,xp:c.xp||0})))
     .sort((a,b)=>b.xp-a.xp);
   const boardHtml = board.length>1
     ? `<h3 style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:400;color:var(--mute);margin:14px 0 0">Room leaderboard</h3>`
@@ -1435,7 +1488,11 @@ function renderCrew(){
     : '';
   el.querySelector('#crewRows').innerHTML = boardHtml + liveRows + pinRows;
   el.querySelectorAll('[data-lgo]').forEach(b=>b.onclick=()=>{
-    const c=LIVE[b.dataset.lgo]; if(c) setNav(c.name,[c.lat,c.lng]); });
+    const c=LIVE[b.dataset.lgo]||ROSTER[b.dataset.lgo];
+    if (c && c.lat) setNav(c.name,[c.lat,c.lng]); });
+  el.querySelectorAll('[data-ldel]').forEach(b=>b.onclick=()=>{
+    delete ROSTER[b.dataset.ldel]; delete LIVE[b.dataset.ldel];
+    drawLive(); save(); renderCrew(); });
   el.querySelectorAll('[data-cgo]').forEach(b=>b.onclick=()=>{
     const c=CREW.find(x=>x.id===b.dataset.cgo); setNav(c.name,[c.lat,c.lng]); });
   el.querySelectorAll('[data-cdel]').forEach(b=>b.onclick=()=>{
@@ -1750,7 +1807,13 @@ function showTour(i){
 }
 function endTour(){
   document.getElementById('tour').classList.remove('show');
-  OPTS.seenTour=true; save();
+  OPTS.seenTour=true;
+  try{ localStorage.setItem('llf:tour','1'); }catch(e){}   // survives even if the main blob fails
+  save();
+}
+function tourSeen(){
+  if (OPTS.seenTour) return true;
+  try{ return localStorage.getItem('llf:tour')==='1'; }catch(e){ return false; }
 }
 document.getElementById('tourNext').onclick=()=>{ tourIdx<TOUR.length-1?showTour(tourIdx+1):endTour(); };
 document.getElementById('tourSkip').onclick=()=>{ tourIdx===0?endTour():showTour(tourIdx-1); };
@@ -1773,26 +1836,39 @@ function startDemo(){
 }
 function stopDemo(){ clearInterval(demoTimer); demoTimer=null; setPill('no signal'); }
 
-/* ---- persistence ---- */
+/* ---- persistence ----
+   Two backends: window.storage exists inside some preview sandboxes,
+   localStorage is what a real browser gives us. Try both, in that order. */
+const SKEY='loveland:v4';
+function snapshot(){
+  return JSON.stringify({CAL,SETS,QUESTS,VISITED,CREW,MARKS,ROSTER,HYD,VIT,OPTS,BONUS,
+    SHARE:{room:SHARE.room,mine:SHARE.mine,name:SHARE.name,id:SHARE.id,relay:SHARE.relay,on:SHARE.on},
+    extraWC:ZONES.filter(z=>z.kind==='toilet'&&z.id.length>3)});
+}
 async function save(){
-  try{ if(window.storage) await window.storage.set('loveland:v4',
-    JSON.stringify({CAL,SETS,QUESTS,VISITED,CREW,MARKS,HYD,VIT,OPTS,BONUS,SHARE:{room:SHARE.room,name:SHARE.name,id:SHARE.id,relay:SHARE.relay},extraWC:ZONES.filter(z=>z.kind==='toilet'&&z.id.length>3)})); }catch(e){}
+  const payload=snapshot();
+  let done=false;
+  try{ if(window.storage){ await window.storage.set(SKEY,payload); done=true; } }catch(e){}
+  if (!done){ try{ localStorage.setItem(SKEY,payload); }catch(e){} }
+  syncHash();
 }
 async function load(){
+  let raw=null;
+  try{ if(window.storage){ const r=await window.storage.get(SKEY); if(r&&r.value) raw=r.value; } }catch(e){}
+  if (!raw){ try{ raw=localStorage.getItem(SKEY); }catch(e){} }
   try{
-    if(!window.storage) return;
-    const r=await window.storage.get('loveland:v4');
-    if(r&&r.value){ const d=JSON.parse(r.value);
+    if(raw){ const d=JSON.parse(raw);
       if(d.CAL) CAL=Object.assign(CAL,d.CAL);
       if(d.SETS&&d.SETS.length) SETS=d.SETS;
       if(d.QUESTS) QUESTS=d.QUESTS;
       if(d.VISITED) VISITED=d.VISITED;
       if(d.CREW) CREW=d.CREW;
       if(d.MARKS) MARKS=d.MARKS;
+      if(d.ROSTER) ROSTER=d.ROSTER;
       if(d.HYD) Object.assign(HYD,d.HYD);
       if(d.VIT) Object.assign(VIT,d.VIT);
       if(d.BONUS) Object.assign(BONUS,d.BONUS);
-      if(d.SHARE) Object.assign(SHARE,d.SHARE,{on:false});
+      if(d.SHARE) Object.assign(SHARE,d.SHARE);
       if(d.OPTS) Object.assign(OPTS,d.OPTS,{demo:false});
       if(d.extraWC) d.extraWC.forEach(z=>{ if(!ZONES.some(x=>x.id===z.id)) ZONES.push(z); });
     }
@@ -1819,15 +1895,20 @@ setInterval(renderHUD, 30000);
 load().then(()=>{
   seed();
   if (!SHARE.id) SHARE.id=rand(8);
+  if (!SHARE.mine) SHARE.mine = (SHARE.room && SHARE.room.length>=5) ? SHARE.room : newCode();
   const hash=(location.hash||'').match(/room=([A-Za-z0-9]{3,12})/);
   if (hash) SHARE.room=hash[1].toUpperCase();
   const rl=(location.hash||'').match(/relay=([^&]+)/);
   if (rl) SHARE.relay=decodeURIComponent(rl[1]);
-  if (!SHARE.room) SHARE.room=rand(5);
+  if (!SHARE.room) SHARE.room=SHARE.mine;
+  syncHash();
   map.setView([CAL.lat,CAL.lng],17);
   applyTheme(); drawPlan(); drawZones(); drawCrew(); drawMarks();
   render(); renderPlan(); applyStack(); applyHud(); startGPS(); watchBattery();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
-  if (!OPTS.seenTour) setTimeout(()=>showTour(0),700);
+  if (!tourSeen()) setTimeout(()=>showTour(0),700);
+  if (SHARE.on && SHARE.name){ bTries=0; setTimeout(liveConnect,1200); }
+  else SHARE.on=false;
+  save();
 });
 </script>
