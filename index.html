@@ -141,6 +141,9 @@
   .row .val{font-family:'IBM Plex Mono',monospace;font-size:13px;text-align:right;flex:none}
   .row .val small{display:block;font-size:9px;color:var(--mute);letter-spacing:.07em}
   .row.done .title{color:var(--mute);text-decoration:line-through}
+  .row.tap{cursor:pointer}
+  .row.tap:active{background:rgba(127,169,174,.12)}
+  .chev{color:var(--mute);font-size:17px;flex:none;line-height:1}
   .row.live{background:linear-gradient(90deg,rgba(232,242,75,.08),transparent);margin:0 -13px;padding:11px 13px}
   .tagin{color:var(--mint)} .tagsoon{color:var(--ember)}
   .kind{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
@@ -739,6 +742,18 @@ function drawRoute(){
     {color:'#E8F24B',weight:2,dashArray:'5 7',opacity:.85}).addTo(map);
 }
 function setNav(name,ll){ navTarget={name,ll}; drawRoute(); map.panTo(ll); render(); }
+function focusOn(name,ll,lastSeen){
+  navTarget={name,ll}; drawRoute();
+  OPTS.follow=false;
+  document.getElementById('followBtn').classList.remove('on');
+  if (me) map.fitBounds(L.latLngBounds([me,ll]).pad(.35));
+  else map.setView(ll,18);
+  setSnap(0);                      // fold the panel so the map is clear
+  render();
+  const d = me?dist(me,ll):null, br = me?bearingTo(me,ll):null;
+  toast('route',name, (d!=null?fmtD(d)+' '+card(br)+' · '+fmtWalk(d)+' walk':'position shown')
+    +(lastSeen?' · last seen '+fmtT(lastSeen):'')+' · dashed line points at them','sys');
+}
 
 /* device compass */
 function onOrient(e){
@@ -1352,7 +1367,7 @@ function renderNearby(){
     const v=el.querySelector('#markName').value.trim(); if(!v) return;
     el.querySelector('#markName').value=''; dropMark(v); };
   el.querySelectorAll('[data-mgo]').forEach(b=>b.onclick=()=>{
-    const m=MARKS.find(x=>x.id===b.dataset.mgo); if(m) setNav(m.label,[m.lat,m.lng]); });
+    const m=MARKS.find(x=>x.id===b.dataset.mgo); if(m) focusOn(m.label,[m.lat,m.lng]); });
   el.querySelectorAll('[data-mdel]').forEach(b=>b.onclick=()=>{
     MARKS=MARKS.filter(x=>x.id!==b.dataset.mdel); drawMarks(); save(); render(); });
   el.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{
@@ -1463,12 +1478,12 @@ function renderCrew(){
     const d = me&&pos.lat?dist(me,[pos.lat,pos.lng]):null;
     const br = me&&pos.lat?bearingTo(me,[pos.lat,pos.lng]):null;
     const age=Date.now()-(pos.t||c.lastSeen||0);
-    return `<div class="row">${rowIco('crew')}<div class="main">
+    return `<div class="row ${pos.lat?'tap':''}" ${pos.lat?`data-lgo="${c.id}"`:''}>${rowIco('crew')}<div class="main">
       <div class="title">${c.name} ${on?'<span class="tagin">· live</span>':''}</div>
-      <div class="sub">${on?'updated '+Math.round(age/1000)+'s ago':'offline · last seen '+fmtT(c.lastSeen)}${d!=null?' · '+card(br):''}</div></div>
-      ${pos.lat?`<button class="mini" data-lgo="${c.id}">Go</button>`:''}
+      <div class="sub">${on?'updated '+Math.round(age/1000)+'s ago':'offline · last seen '+fmtT(c.lastSeen)}${d!=null?' · '+card(br)+' · tap to see them':''}</div></div>
       <button class="mini" data-ldel="${c.id}">✕</button>
-      <div class="val">${d!=null?fmtD(d):'—'}<small>${d!=null?fmtWalk(d):''}</small></div></div>`;
+      <div class="val">${d!=null?fmtD(d):'—'}<small>${d!=null?fmtWalk(d):''}</small></div>
+      ${pos.lat?'<span class="chev">›</span>':''}</div>`;
   }).join('');
   const pinRows = CREW.map(c=>{
     const d = me?dist(me,[c.lat,c.lng]):null, br = me?bearingTo(me,[c.lat,c.lng]):null;
@@ -1487,10 +1502,12 @@ function renderCrew(){
           <div class="title">${b.name}</div></div><div class="val">${b.xp}<small>xp</small></div></div>`).join('')
     : '';
   el.querySelector('#crewRows').innerHTML = boardHtml + liveRows + pinRows;
-  el.querySelectorAll('[data-lgo]').forEach(b=>b.onclick=()=>{
-    const c=LIVE[b.dataset.lgo]||ROSTER[b.dataset.lgo];
-    if (c && c.lat) setNav(c.name,[c.lat,c.lng]); });
-  el.querySelectorAll('[data-ldel]').forEach(b=>b.onclick=()=>{
+  el.querySelectorAll('[data-lgo]').forEach(row=>row.onclick=()=>{
+    const c=LIVE[row.dataset.lgo]||ROSTER[row.dataset.lgo];
+    if (c && c.lat) focusOn(c.name,[c.lat,c.lng], isOnline(c.id)?null:c.lastSeen);
+  });
+  el.querySelectorAll('[data-ldel]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
     delete ROSTER[b.dataset.ldel]; delete LIVE[b.dataset.ldel];
     drawLive(); save(); renderCrew(); });
   el.querySelectorAll('[data-cgo]').forEach(b=>b.onclick=()=>{
